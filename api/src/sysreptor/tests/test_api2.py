@@ -185,6 +185,30 @@ class TestProjectApi:
         assert res.status_code == 200
         assert res.data['tags'] == expected
 
+    def assert_project_search_result(self, params, expected_result):
+        res = self.client.get(reverse('pentestproject-list', query=params))
+        assert res.status_code == 200
+        assert [p['id'] for p in res.data['results']] == [str(p.id) for p in expected_result]
+
+    def test_project_search(self):
+        search_term = "tls crypt"
+
+        p_title_and_tag = create_project(name="Weak TLS Project", tags=["crypto"],members=[self.user], findings_kwargs=[])
+        p_data_only = create_project(name="Unrelated Project", tags=["unrelated"], members=[self.user], findings_kwargs=[
+            {"data": {"description": "Weak TLS and weak crypto"}}
+        ])
+        create_project(name="TLS only", tags=["unrelated"], members=[self.user], findings_kwargs=[
+            {"data": {"description": "no crypto term here"}}
+        ])
+
+        # Title/tags should rank higher than trigram-only matches.
+        self.assert_project_search_result({"search": search_term}, [p_title_and_tag, p_data_only])
+        # TODO: more test cases
+        # Projects match all trigrams
+        # Only projects with tags, ordered by search rank
+        # 
+        # All projects
+
 
 @pytest.mark.django_db()
 class TestProjectTypeApi:
