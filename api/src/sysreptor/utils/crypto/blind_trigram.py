@@ -2,7 +2,7 @@ import hashlib
 import hmac
 import re
 import unicodedata
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 
 from django.conf import settings
 
@@ -30,7 +30,10 @@ def get_blind_trigram_key() -> bytes:
 def normalize_text(value: str) -> str:
     if value is None:
         return ""
-    value = unicodedata.normalize("NFKC", str(value)).casefold()
+    # Accent-insensitive: compatibility-decompose, strip combining marks, then re-compose.
+    value = unicodedata.normalize("NFKD", str(value))
+    value = "".join(c for c in value if not unicodedata.combining(c))
+    value = unicodedata.normalize("NFKC", value).casefold()
     value = WHITESPACE_RE.sub(" ", value).strip()
     return value
 
@@ -53,12 +56,7 @@ def iter_text_values(data) -> Iterator[str]:
             yield from iter_text_values(item)
 
 
-def extract_text_from_data(data) -> str:
-    return " ".join(map(normalize_text, iter_text_values(data)))
-
-
 def iter_trigrams(text: str) -> Iterator[bytes]:
-    # TODO: split by whitespace and yield trigrams of each word or also yield trigrams for space-separators
     s = normalize_text(text)
     if not s or len(s) < 3:
         return
@@ -76,14 +74,20 @@ def token_for_trigram(trigram: bytes, key: bytes | None = None) -> bytes:
     return digest[:TOKEN_LEN]
 
 
-def tokens_for_text(text: str, *, key: bytes | None = None) -> list[bytes]:
+def tokens_for_text(text: str|list[str], *, key: bytes | None = None) -> list[bytes]:
+    if isinstance(text, str):
+        text = [text]
+    trigrams = set()
+    for t in text:
+        trigrams.update(iter_trigrams(t))
+
     key = key or get_blind_trigram_key()
     out = set()
-    for tg in iter_trigrams(text):
+    for tg in trigrams:
         out.add(token_for_trigram(tg, key=key))
     return sorted(out)
 
 
 def tokens_for_data(data, *, key: bytes | None = None) -> list[bytes]:
-    return tokens_for_text(extract_text_from_data(data), key=key)
+    return tokens_for_text(list(iter_text_values(data)), key=key)
 

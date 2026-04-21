@@ -11,7 +11,7 @@ from sysreptor.utils.crypto.fields import EncryptedField
 from sysreptor.utils.crypto.storage import EncryptedStorageMixin
 from sysreptor.utils.files import get_all_file_fields
 from sysreptor.utils.utils import groupby_to_dict
-from sysreptor.pentests.models import BlindTrigramToken, PentestFinding, ReportSection
+from sysreptor.pentests.models import BlindTrigramToken, PentestProject
 
 
 class Command(BaseCommand):
@@ -33,10 +33,9 @@ class Command(BaseCommand):
                 model.objects.bulk_update(model.objects.all().iterator(), encrypted_fields)
 
         # Rebuild project search index
-        chunk_size = 1000
-        for model in [PentestFinding, ReportSection]:
-            for instances in batched(model.objects.select_related('project__project_type').iterator(chunk_size=chunk_size), chunk_size):
-                BlindTrigramToken.objects.rebuild_index_for_instances(instances)
+        chunk_size = 100
+        for projects in batched(PentestProject.objects.select_related('project_type').prefetch_related('findings', 'sections').iterator(chunk_size=chunk_size), chunk_size):
+            BlindTrigramToken.objects.rebuild_index_for_projects(projects)
 
         # Encrypt files and file DB fields
         for storage_name, fields in groupby_to_dict(get_all_file_fields(), key=lambda f: f['storage_name']).items():
