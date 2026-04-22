@@ -6,7 +6,6 @@ from collections.abc import Iterator
 
 from django.conf import settings
 
-
 TRIGRAM_HMAC_PREFIX = b"sysreptor|blind_trigram|v1|"
 TOKEN_LEN = 16  # bytes (truncate HMAC-SHA256)
 WHITESPACE_RE = re.compile(r"\s+")
@@ -64,7 +63,7 @@ def iter_trigrams(text: str) -> Iterator[bytes]:
     b = s.encode("utf-8", errors="ignore")
     if len(b) < 3:
         return
-    for i in range(0, len(b) - 2):
+    for i in range(len(b) - 2):
         yield b[i : i + 3]
 
 

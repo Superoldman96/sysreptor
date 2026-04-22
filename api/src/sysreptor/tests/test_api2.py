@@ -194,10 +194,10 @@ class TestProjectApi:
     def test_project_search(self):
         p_title_and_tag = create_project(name="Title and tag TLS", tags=["crypto"], members=[self.user], findings_kwargs=[])
         p_data_only = create_project(name="Content match", tags=["unrelated"], members=[self.user], findings_kwargs=[
-            {"data": {"description": "Weak TLS and weak crypto content"}}
+            {"data": {"description": "Weak TLS and weak crypto content"}},
         ])
         p_title_and_content = create_project(name="Title and content TLS", tags=["unrelated"], members=[self.user], findings_kwargs=[
-            {"data": {"description": "no crypto content here"}}
+            {"data": {"description": "no crypto content here"}},
         ])
         p_no_match = create_project(name='No match', tags=['unrelated'], members=[self.user], findings_kwargs=[])
 
