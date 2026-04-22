@@ -25,8 +25,8 @@ from sysreptor.pentests.tasks import (
     cleanup_project_files,
     cleanup_template_files,
     cleanup_usernotebook_files,
-    update_project_search_index,
     reset_stale_archive_restores,
+    update_project_search_index,
 )
 from sysreptor.tasks.models import (
     PeriodicTask,
@@ -90,7 +90,7 @@ class TestPeriodicTaskScheduling:
         assert not self.mock_task_success.called
 
     def test_rerun_after_schedule(self):
-        PeriodicTask.objects.create(id='task_success', status=TaskStatus.SUCCESS, started=timezone.now() - timedelta(days=2), completed=timezone.now()- timedelta(days=2))
+        PeriodicTask.objects.create(id='task_success', status=TaskStatus.SUCCESS, started=timezone.now() - timedelta(days=2), completed=timezone.now() - timedelta(days=2))
         start_time = timezone.now()
         self.run_tasks()
         t = PeriodicTask.objects.get(id='task_success')
@@ -120,6 +120,16 @@ class TestPeriodicTaskScheduling:
 
     def test_running_timeout_retry(self):
         PeriodicTask.objects.create(id='task_success', status=TaskStatus.RUNNING, started=timezone.now() - timedelta(hours=2))
+        start_time = timezone.now()
+        self.run_tasks()
+        t = PeriodicTask.objects.get(id='task_success')
+        assert t.status == TaskStatus.SUCCESS
+        assert t.started > start_time
+        assert t.completed > start_time
+        assert self.mock_task_success.call_count == 1
+
+    def test_queued_run_immediately(self):
+        PeriodicTask.objects.create(id='task_success', status=TaskStatus.QUEUED, started=timezone.now(), completed=timezone.now())
         start_time = timezone.now()
         self.run_tasks()
         t = PeriodicTask.objects.get(id='task_success')
@@ -587,7 +597,7 @@ class TestUpdateProjectSearchIndex:
         finding = project.findings.first()
         assert BlindTrigramToken.objects.filter(project=project).count() == 0
 
-        self.run_rebuild_project_search_index(num_queries=4 + 1)
+        self.run_rebuild_project_search_index(num_queries=5)
         tokens_1 = BlindTrigramToken.objects.filter(project=project).values_list('token', 'updated')
         assert {u for _, u in tokens_1} == {finding.updated}
 
@@ -596,7 +606,7 @@ class TestUpdateProjectSearchIndex:
 
         # Full rebuild
         BlindTrigramToken.objects.all().delete()
-        self.run_rebuild_project_search_index(num_queries=4 + 1)
+        self.run_rebuild_project_search_index(num_queries=5)
         tokens_2 = BlindTrigramToken.objects.filter(project=project).values_list('token', 'updated')
         assert set(tokens_2) == set(tokens_1)
 
@@ -604,24 +614,24 @@ class TestUpdateProjectSearchIndex:
         project = create_project(findings_kwargs=[{'data': {'description': 'abcdefgh'}}])
         finding = project.findings.first()
 
-        self.run_rebuild_project_search_index(num_queries=4 + 1)
+        self.run_rebuild_project_search_index(num_queries=5)
 
         # Change data so token set shrinks (delete-only diff possible)
         update(finding, data={'description': 'abcd'})
         assert BlindTrigramToken.objects.filter(project=project).aggregate(m=models.Max('updated'))['m'] < finding.updated
 
-        self.run_rebuild_project_search_index(num_queries=4 + 2)
+        self.run_rebuild_project_search_index(num_queries=5)
         tokens = list(BlindTrigramToken.objects.filter(project=project).values_list('token', 'updated'))
         assert tokens
         assert {u for _, u in tokens} == {finding.updated}
-        
+
         assert not BlindTrigramToken.objects.filter(project=project).search('efgh').exists()
 
     def test_only_stale_projects_rebuilt(self):
         project_stale = create_project(findings_kwargs=[{'data': {'description': 'abcdefgh'}}])
         project_fresh = create_project(findings_kwargs=[{'data': {'description': 'ijklmnop'}}])
 
-        self.run_rebuild_project_search_index(num_queries=4 + 1)
+        self.run_rebuild_project_search_index(num_queries=5)
         stale_updated_1 = BlindTrigramToken.objects.filter(project=project_stale).aggregate(m=models.Max('updated'))['m']
         fresh_updated_1 = BlindTrigramToken.objects.filter(project=project_fresh).aggregate(m=models.Max('updated'))['m']
 
@@ -630,7 +640,7 @@ class TestUpdateProjectSearchIndex:
         update(finding, data={'description': 'abcdxxxx'})
         assert finding.updated > stale_updated_1
 
-        self.run_rebuild_project_search_index(num_queries=4 + 3)
+        self.run_rebuild_project_search_index(num_queries=5)
         stale_updated_2 = BlindTrigramToken.objects.filter(project=project_stale).aggregate(m=models.Max('updated'))['m']
         fresh_updated_2 = BlindTrigramToken.objects.filter(project=project_fresh).aggregate(m=models.Max('updated'))['m']
         assert stale_updated_2 == finding.updated
@@ -650,7 +660,7 @@ class TestUpdateProjectSearchIndex:
         project = create_project(findings_kwargs=[{
             'data': {'description': 'Weak ＴＬＳ\t   ČrŸpTö\ncontent'},
         }])
-        self.run_rebuild_project_search_index(num_queries=4 + 1)
+        self.run_rebuild_project_search_index(num_queries=5)
         assert list(PentestProject.objects.search(['tls crypto'])) == [project]
 
     def test_search_across_multiple_encryption_keys(self):
@@ -665,13 +675,13 @@ class TestUpdateProjectSearchIndex:
                 name='p1',
                 findings_kwargs=[{'data': {'description': 'sharedword project1 content'}}],
             )
-            self.run_rebuild_project_search_index(num_queries=4 + 1)
+            self.run_rebuild_project_search_index(num_queries=5)
 
             with override_settings(DEFAULT_ENCRYPTION_KEY_ID='key2'):
                 project2 = create_project(
                     name='p2',
                     findings_kwargs=[{'data': {'description': 'sharedword project2 content'}}],
                 )
-                self.run_rebuild_project_search_index(num_queries=4 + 1)
+                self.run_rebuild_project_search_index(num_queries=5)
 
                 assert set(PentestProject.objects.search(['sharedword'])) == {project1, project2}
