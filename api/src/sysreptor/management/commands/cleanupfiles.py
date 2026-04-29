@@ -67,8 +67,12 @@ class Command(BaseCommand):
                 if hasattr(field_info['model'], 'history'):
                     query_parts.append(field_info['model'].history.annotate(file_path=F(field_info['field_name'])).values('file_path'))
             fs_files = set(walk_storage_dir(storage))
-            db_files = set(query_parts[0].union(*query_parts[1:]).values_list('file_path', flat=True))
-
+            if not query_parts:
+                db_files = set()
+            elif len(query_parts) == 1:
+                db_files = set(query_parts[0].values_list('file_path', flat=True))
+            else:
+                db_files = set(query_parts[0].union(*query_parts[1:]).values_list('file_path', flat=True))
 
             unreferenced_files = fs_files - db_files
             for f in unreferenced_files:
