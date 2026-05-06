@@ -1,9 +1,11 @@
 import argparse
 import logging
+from datetime import timedelta
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.db.models import F
+from django.utils import timezone
 
 from sysreptor.api_utils.backup_utils import walk_storage_dir
 from sysreptor.utils.files import get_all_file_fields
@@ -34,17 +36,19 @@ class Command(BaseCommand):
     @transaction.atomic
     def cleanup_database(self, only_storage=None):
         logging.info('Cleaning up file references from the database that no longer exist on the filesystem')
+        cleanup_older_than = timezone.now() - timedelta(hours=1)
+
         for field_info in get_all_file_fields():
             if only_storage and only_storage != field_info['storage_name']:
                 continue
 
             logging.info(f'Cleaning up {field_info["model"]._meta.label}.{field_info["field_name"]} in storage {field_info["storage_name"]}')
-            qs = field_info['model'].objects \
-                .filter(pk__in=[
-                    o.pk
-                    for o in field_info['model'].objects.iterator()
-                    if not self.file_exists(getattr(o, field_info['field_name']))
-                ])
+            missing_file_pks = []
+            for o in field_info['model'].objects.filter(created__lt=cleanup_older_than).iterator():
+                if not self.file_exists(getattr(o, field_info['field_name'])):
+                    missing_file_pks.append(o.pk)
+
+            qs = field_info['model'].objects.filter(pk__in=missing_file_pks)
             if field_info['field'].null:
                 qs.update(**{field_info['field_name']: None})
                 logging.info(f'  Updated {qs.count()} entries')
@@ -54,6 +58,8 @@ class Command(BaseCommand):
 
     def cleanup_filesystem(self, only_storage=None):
         logging.info('Cleaning up files from the filesystem that are not referenced in the database')
+        cleanup_older_than = timezone.now() - timedelta(hours=1)
+
         for storage_name, fields in groupby_to_dict(get_all_file_fields(), key=lambda f: f['storage_name']).items():
             if only_storage and only_storage != storage_name:
                 continue
@@ -75,11 +81,19 @@ class Command(BaseCommand):
                 db_files = set(query_parts[0].union(*query_parts[1:]).values_list('file_path', flat=True))
 
             unreferenced_files = fs_files - db_files
+            deleted_files = []
             for f in unreferenced_files:
                 try:
+                    try:
+                        if storage.get_created_time(f) > cleanup_older_than:
+                            continue
+                    except (OSError, NotImplementedError):
+                        pass
+
                     storage.delete(f)
+                    deleted_files.append(f)
                 except FileNotFoundError:
                     pass
                 except Exception as ex:
                     logging.warning(f'  Could not delete {f}: {ex}')
-            logging.info(f'  Deleted {len(unreferenced_files)} files')
+            logging.info(f'  Deleted {len(deleted_files)} files')

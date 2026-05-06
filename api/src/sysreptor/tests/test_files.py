@@ -1,13 +1,15 @@
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
 from django.core.files.base import ContentFile
 from django.core.management import call_command
 from django.test import override_settings
+from django.utils import timezone
 
 from sysreptor.pentests import storages as pentest_storages
 from sysreptor.pentests.models import UploadedAsset, UploadedImage
-from sysreptor.tests.mock import create_project, create_project_type
+from sysreptor.tests.mock import create_project, create_project_type, mock_time
 
 
 def file_exists(file) -> bool:
@@ -99,7 +101,8 @@ class TestCleanupFilesCommand:
         storage.delete(image.file.name)
         assert not file_exists(image.file)
 
-        call_command('cleanupfiles', database=True, filesystem=False, storage='uploadedimages', verbosity=0)
+        with mock_time(after=timedelta(days=10)):
+            call_command('cleanupfiles', database=True, filesystem=False, storage='uploadedimages', verbosity=0)
 
         # Unreferenced images should be deleted
         assert not UploadedImage.objects.filter(pk=image.pk).exists()
@@ -117,9 +120,11 @@ class TestCleanupFilesCommand:
         storage = pentest_storages.get_uploaded_image_storage()
         filename = f'orphan_{uuid4()}.png'
         orphan_name = storage.save(filename, ContentFile(content=b'orphan', name=filename))
+        storage._resolve(orphan_name).created_time = timezone.now() - timedelta(days=10)
         assert storage.exists(orphan_name)
 
-        call_command('cleanupfiles', database=False, filesystem=True, storage='uploadedimages', verbosity=0)
+        with mock_time(after=timedelta(days=10)):
+            call_command('cleanupfiles', database=False, filesystem=True, storage='uploadedimages', verbosity=0)
 
         # Orphan file should be deleted
         assert not storage.exists(orphan_name)
@@ -135,7 +140,8 @@ class TestCleanupFilesCommand:
         f = image.file
         image.delete()
 
-        call_command('cleanupfiles', database=False, filesystem=True, verbosity=0)
+        with mock_time(after=timedelta(days=10)):
+            call_command('cleanupfiles', database=False, filesystem=True, verbosity=0)
 
         # File should not be deleted because it is referenced in the history
         assert file_exists(f)
