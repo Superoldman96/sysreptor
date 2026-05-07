@@ -1,3 +1,4 @@
+import concurrent.futures
 import contextlib
 import gc
 import io
@@ -6,7 +7,10 @@ import json
 import logging
 import os
 import zipfile
+from collections import deque
 from pathlib import Path
+from queue import Empty, Full, Queue
+from threading import Event
 
 import boto3
 import zipstream
@@ -24,7 +28,7 @@ from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.loader import MigrationLoader
 from django.utils import timezone
 
-from sysreptor.api_utils.models import BackupLog, BackupLogType
+from sysreptor.api_utils.models import BackupLog, BackupLogType, DbConfigurationEntry
 from sysreptor.pentests.models.project import ProjectMemberRole
 from sysreptor.utils import crypto
 from sysreptor.utils.configuration import configuration
@@ -125,34 +129,179 @@ def get_storage_dirs():
     return {k: storages[k] for k in storages.backends.keys() if k not in ['staticfiles', 'default']}
 
 
-def backup_files(z, path, storage, backup_stats: dict=None):
-    def file_chunks(f):
-        try:
-            with storage.open(f) as fp:
-                yield from fp.chunks()
-            if backup_stats is not None:
-                backup_stats['file_successes'] = backup_stats.get('file_successes', 0) + 1
-        except (FileNotFoundError, OSError):
-            if backup_stats is not None:
-                backup_stats['file_errors'] = backup_stats.get('file_errors', 0) + 1
+class ChunkPipe:
+    _SENTINEL = object()
 
-    for f in walk_storage_dir(storage):
-        z.add(arcname=str(Path(path) / f), data=file_chunks(f))
+    def __init__(self, *, max_queue_items: int = 5) -> None:
+        self.queue: Queue = Queue(maxsize=max(1, int(max_queue_items)))
+        self.cancelled = Event()
+
+    def push(self, data) -> None:
+        while True:
+            if self.cancelled.is_set():
+                return
+            try:
+                self.queue.put(data, timeout=1)
+                return
+            except Full:
+                pass
+            except Exception:
+                self.cancelled.set()
+                raise
+
+    def fail(self, ex) -> None:
+        self.push(ex)
+
+    def close(self) -> None:
+        self.push(self._SENTINEL)
+
+    def cancel(self) -> None:
+        self.cancelled.set()
+        # Drain any queued chunks.
+        while True:
+            try:
+                item = self.queue.get_nowait()
+            except Empty:
+                return
+            if item is self._SENTINEL:
+                return
+
+    def iter_items(self):
+        try:
+            while True:
+                item = self.queue.get()
+                if item is self._SENTINEL:
+                    return
+                elif isinstance(item, Exception):
+                    raise item
+                yield item
+        finally:
+            self.cancel()
+
+
+class BackupFilePrefetcher:
+    def __init__(
+        self,
+        *,
+        executor: concurrent.futures.ThreadPoolExecutor,
+        storage,
+        files: list[str],
+        prefetch_size: int = 10,
+        chunk_size: int | None = None,
+        backup_stats: dict | None = None,
+    ) -> None:
+        self.executor = executor
+        self.storage = storage
+        self.files = list(files)
+        self.prefetch_size = max(1, int(prefetch_size))
+        self.chunk_size = chunk_size or settings.FILE_UPLOAD_MAX_MEMORY_SIZE
+        self.backup_stats = backup_stats
+        self._in_flight: deque[tuple[str, ChunkPipe]] = deque()
+        self._next_submit_idx = 0
+
+    def _produce_chunks(self, name: str, pipe: ChunkPipe) -> None:
+        try:
+            with self.storage.open(name) as fp:
+                for chunk in fp.chunks(chunk_size=self.chunk_size):
+                    if pipe.cancelled.is_set():
+                        break
+                    pipe.push(chunk)
+        except Exception as ex:
+            pipe.fail(ex)
+        finally:
+            pipe.close()
+
+    def _submit_next(self) -> bool:
+        if self._next_submit_idx >= len(self.files):
+            return False
+        f = self.files[self._next_submit_idx]
+        self._next_submit_idx += 1
+
+        pipe = ChunkPipe()
+        self.executor.submit(self._produce_chunks, f, pipe)
+        self._in_flight.append((f, pipe))
+        return True
+
+    def _ensure_in_flight(self) -> None:
+        while len(self._in_flight) < self.prefetch_size and self._submit_next():
+            pass
+
+    def _file_chunks(self, name: str):
+        # Maintain the rolling prefetch window lazily, when the zipstream consumer
+        # actually starts pulling chunks for this entry. This keeps iter_entries
+        # non-blocking and ensures prefetching happens during streaming.
+        self._ensure_in_flight()
+        if not self._in_flight:
+            return
+
+        actual_name, pipe = self._in_flight.popleft()
+        if actual_name != name:
+            raise RuntimeError('Backup prefetch queue out of sync')
+
+        try:
+            yield from pipe.iter_items()
+            if self.backup_stats is not None:
+                self.backup_stats['file_successes'] = self.backup_stats.get('file_successes', 0) + 1
+        except (FileNotFoundError, OSError):
+            if self.backup_stats is not None:
+                self.backup_stats['file_errors'] = self.backup_stats.get('file_errors', 0) + 1
+        finally:
+            pipe.cancel()
+
+    def iter_entries(self):
+        for f in self.files:
+            yield f, self._file_chunks(f)
+
+    def cancel(self) -> None:
+        while self._in_flight:
+            _, pipe = self._in_flight.popleft()
+            pipe.cancel()
+
+
+def backup_files(z, path, storage, executor, backup_stats=None):
+    prefetcher = BackupFilePrefetcher(
+        executor=executor,
+        storage=storage,
+        files=walk_storage_dir(storage),
+        prefetch_size=settings.BACKUP_FILE_PREFETCH_SIZE,
+        backup_stats=backup_stats,
+    )
+
+    original_compress_level = z._compress_level
+    original_compress_type = z._compress_type
+    if path in ['uploadedimages', 'archivedfiles']:
+        # Do not compress images because most image file formats are already compressed.
+        # Archived files are compressed and encrypted
+        z._compress_level = None
+        z._compress_type = zipstream.ZIP_STORED
+
+    for f, data_iter in prefetcher.iter_entries():
+        z.add(arcname=str(Path(path) / f), data=data_iter)
+
+    z._compress_level = original_compress_level
+    z._compress_type = original_compress_type
+
+    return prefetcher
 
 
 def create_backup(user=None):
     logging.info('Backup requested')
     backup_log_started = BackupLog.objects.create(type=BackupLogType.BACKUP_STARTED, user=user)
 
-    z = zipstream.ZipStream(compress_type=zipstream.ZIP_DEFLATED)
+    z = zipstream.ZipStream(compress_type=zipstream.ZIP_DEFLATED, compress_level=3)
     z.add(arcname='VERSION', data=settings.VERSION.encode())
     z.add(arcname='migrations.json', data=json.dumps(create_migration_info()).encode())
     z.add(arcname='configurations.json', data=json.dumps(create_configurations_backup()).encode())
     z.add(arcname='backup.jsonl', data=create_database_dump())
 
+    executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=settings.BACKUP_FILE_PREFETCH_WORKERS,
+        thread_name_prefix='backup-prefetch',
+    )
     backup_stats = {}
+    prefetchers: list[BackupFilePrefetcher] = []
     for d, storage in get_storage_dirs().items():
-        backup_files(z, d, storage, backup_stats=backup_stats)
+        prefetchers.append(backup_files(z, d, storage, executor=executor, backup_stats=backup_stats))
 
     def get_backup_stats():
         yield b''
@@ -170,7 +319,14 @@ def create_backup(user=None):
         gc.collect()
     z.add(arcname='stats.json', data=get_backup_stats())
 
-    return z
+    def stream():
+        try:
+            yield from z
+        finally:
+            for p in prefetchers:
+                p.cancel()
+            executor.shutdown(wait=True)
+    return stream()
 
 
 def encrypt_backup(z, aes_key):

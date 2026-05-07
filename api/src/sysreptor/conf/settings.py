@@ -562,7 +562,8 @@ MAX_LOCK_TIME = timedelta(seconds=90)
 SPELLCHECK_URL = config('SPELLCHECK_URL', default=None)
 
 BACKUP_KEY = config('BACKUP_KEY', default=None)
-
+BACKUP_FILE_PREFETCH_WORKERS = config('BACKUP_FILE_PREFETCH_WORKERS', cast=int, default=4)
+BACKUP_FILE_PREFETCH_SIZE = config('BACKUP_FILE_PREFETCH_SIZE', cast=int, default=10)
 
 from sysreptor.utils.crypto import EncryptionKey  # noqa: E402
 
