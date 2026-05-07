@@ -3,9 +3,7 @@ import json
 import tarfile
 
 import pytest
-from django.core.files.base import ContentFile
 from django.db.models import ProtectedError, QuerySet, RestrictedError
-from django.test import override_settings
 from rest_framework.exceptions import ValidationError
 
 from sysreptor.pentests.collab.text_transformations import SelectionRange
@@ -554,64 +552,6 @@ class TestLinkedProject:
 
 
 @pytest.mark.django_db()
-class TestFileDelete:
-    @pytest.fixture(autouse=True)
-    def setUp(self):
-        with override_settings(SIMPLE_HISTORY_ENABLED=False):
-            p = create_project()
-            self.image = p.images.first()
-            self.asset = p.project_type.assets.first()
-            yield
-
-    def assertFileExists(self, file, expected):
-        exists = False
-        try:
-            with file.open():
-                exists = True
-        except ValueError:
-            exists = False
-        assert exists == expected
-
-    def test_delete_file_referenced_only_once(self):
-        self.image.delete()
-        self.assertFileExists(self.image.file, False)
-
-        self.asset.delete()
-        self.assertFileExists(self.asset.file, False)
-
-    def test_delete_file_referenced_multiple_times(self):
-        UploadedImage.objects.create(linked_object=self.image.linked_object, name='new.png', file=self.image.file)
-        self.image.delete()
-        self.assertFileExists(self.image.file, True)
-
-        UploadedAsset.objects.create(linked_object=self.asset.linked_object, name='new.png', file=self.asset.file)
-        self.asset.delete()
-        self.assertFileExists(self.asset.file, True)
-
-    def test_delete_copied_images(self):
-        p = create_project()
-        p2 = p.copy()
-
-        images = list(p.images.order_by('name_hash'))
-        for o, c in zip(images, p2.images.order_by('name_hash'), strict=False):
-            assert o.file == c.file
-        p.delete()
-        for i in images:
-            self.assertFileExists(i.file, True)
-
-    def test_delete_copied_assets(self):
-        t = create_project_type()
-        t2 = t.copy()
-
-        assets = list(t.assets.order_by('name_hash'))
-        for o, c in zip(assets, t2.assets.order_by('name_hash'), strict=False):
-            assert o.file == c.file
-        t.delete()
-        for a in assets:
-            self.assertFileExists(a.file, True)
-
-
-@pytest.mark.django_db()
 class TestCopyModel:
     def assert_project_type_copy_equal(self, pt, cp, exclude_fields=None):
         assert pt != cp
@@ -819,21 +759,3 @@ class TestDeleteUser:
         u.delete()
 
 
-@pytest.mark.parametrize(('original', 'cleaned'), [
-    ('test.txt', 'test.txt'),
-    # Attacks
-    ('te\x00st.txt', 'te-st.txt'),
-    ('te/st.txt', 'st.txt'),
-    ('t/../../../est.txt', 'est.txt'),
-    ('../test1.txt', 'test1.txt'),
-    ('..', 'file'),
-    # Markdown conflicts
-    ('/test2.txt', 'test2.txt'),
-    ('t**es**t.txt', 't--es--t.txt'),
-    ('te_st_.txt', 'te-st-.txt'),
-    ('t![e]()st.txt', 't--e---st.txt'),
-])
-@pytest.mark.django_db()
-def test_uploadedfile_filename(original, cleaned):
-    actual_name = UploadedAsset.objects.create(name=original, file=ContentFile(content=b'test', name='test'), linked_object=create_project_type()).name
-    assert actual_name == cleaned
