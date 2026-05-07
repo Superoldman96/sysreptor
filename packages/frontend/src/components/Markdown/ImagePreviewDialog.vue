@@ -119,61 +119,10 @@ const emit = defineEmits<{
   'image-edited': [value: { oldUrl: string; newUrl: string; oldMarkdown: string|null; newMarkdown: string|null; }];
 }>();
 
-const dialogRef = useTemplateRef('dialogRef');
 const windowRef = useTemplateRef('windowRef');
 const imageEditorRef = useTemplateRef('imageEditorRef');
 const imageZoomRefs = ref<any[]>([]);
 
-// function isUndoRedoKeydown(e: KeyboardEvent) {
-//   const key = e.key.toLowerCase();
-//   const mod = e.metaKey || e.ctrlKey;
-//   if (!mod) { return false; }
-//   return key === 'z' || key === 'y';
-// }
-
-// function isHistoryBeforeInput(e: Event): e is InputEvent {
-//   return (e as InputEvent)?.inputType === 'historyUndo' || (e as InputEvent)?.inputType === 'historyRedo';
-// }
-
-// /**
-//  * When this dialog is open, the underlying CodeMirror editor can still receive native undo/redo
-//  * via `beforeinput` (inputType=historyUndo/historyRedo) if focus is not properly trapped.
-//  * We prevent these events at capture phase so they never reach CodeMirror.
-//  */
-// function preventBackgroundUndoRedo() {
-//   const onKeydownCapture = (e: KeyboardEvent) => {
-//     if (!modelValue.value) { return; }
-//     if (!isUndoRedoKeydown(e)) { return; }
-//     // If the dialog didn't get focus for some reason, prevent undo/redo from affecting background editors.
-//     e.preventDefault();
-//     e.stopImmediatePropagation();
-//   };
-//   const onBeforeInputCapture = (e: Event) => {
-//     if (!modelValue.value) { return; }
-//     if (!isHistoryBeforeInput(e)) { return; }
-//     // This is the event CodeMirror's history() listens to. Prevent it while dialog is open.
-//     e.preventDefault();
-//     e.stopImmediatePropagation();
-//   };
-
-//   // Capture on window so we see the event before any component/editor handlers.
-//   window.addEventListener('keydown', onKeydownCapture);
-//   window.addEventListener('beforeinput', onBeforeInputCapture);
-//   return () => {
-//     window.removeEventListener('keydown', onKeydownCapture);
-//     window.removeEventListener('beforeinput', onBeforeInputCapture);
-//   };
-// }
-
-// const cleanupPreventUndoRedo = shallowRef<null | (() => void)>(null);
-// watch(modelValue, (val) => {
-//   cleanupPreventUndoRedo.value?.();
-//   cleanupPreventUndoRedo.value = null;
-//   if (val) {
-//     cleanupPreventUndoRedo.value = preventBackgroundUndoRedo();
-//   }
-// }, { immediate: true });
-// onBeforeUnmount(() => cleanupPreventUndoRedo.value?.());
 
 const editMode = ref(false);
 const wasOpenedInEditMode = ref(false);
@@ -256,8 +205,9 @@ function updateImageUrlInMarkdown(newMd: string) {
   }
 
   // Extract URLs from markdown and emit event to update editor
-  const oldUrl = modelValue.value?.markdown?.match(/\]\(\/[^\s)?"]+/)?.[0]?.substring(2);
-  const newUrl = newMd.match(/\]\(\/[^\s)?"]+/)?.[0]?.substring(2);
+  const imageUrlRegex = /(\]\(|src=")(?<url>\s*\/[^\s)?"]+)/;
+  const oldUrl = modelValue.value?.markdown?.match(imageUrlRegex)?.groups?.url;
+  const newUrl = newMd.match(imageUrlRegex)?.groups?.url;
   if (!oldUrl || !newUrl) {
     throw new Error('Failed to save image: Could not extract URLs');
   }

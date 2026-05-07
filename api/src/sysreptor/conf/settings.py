@@ -408,7 +408,7 @@ X_FRAME_OPTIONS = 'SAMEORIGIN'
 SECURE_CSP = {
     'default-src': [CSP.NONE],
     'img-src': [CSP.SELF, 'data:'],
-    'font-src': [CSP.SELF],
+    'font-src': [CSP.SELF, 'data:'],
     'worker-src': [CSP.SELF],
     'connect-src': [CSP.SELF, 'data:', 'https://sysreptor.com'],
     'frame-ancestors': [CSP.SELF],

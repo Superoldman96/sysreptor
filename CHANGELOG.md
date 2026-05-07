@@ -1,5 +1,9 @@
 # Changelog
 
+## Upcoming
+* Image editor: fix image URLs not updated for HTML syntax in markdown
+
+
 ## v2026.29 - 2026-05-06
 * Security: implement multiple hardening measures and code quality improvements
 * SSO: make the user identifier claim configurable (https://docs.sysreptor.com/users/oidc-generic/)

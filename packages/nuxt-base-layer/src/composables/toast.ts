@@ -64,14 +64,20 @@ export function requestErrorToast({ error, message }: { error: any; message?: st
   if (!message) {
     if (error.reason) {
       message = error.reason as string;
-    } else if (error?.options?.method === "GET") {
-      message = "Failed to load data";
-    } else if (["POST", "PUT", "PATCH"].includes(error?.options?.method)) {
-      message = "Failed to save data";
-    } else if (error?.options?.method === "DELETE") {
-      message = "Failed to delete data";
+    } else if (error.name === 'FetchError') {
+      if (error?.options?.method === "GET") {
+        message = "Failed to load data";
+      } else if (["POST", "PUT", "PATCH"].includes(error?.options?.method)) {
+        message = "Failed to save data";
+      } else if (error?.options?.method === "DELETE") {
+        message = "Failed to delete data";
+      } else {
+        message = "Request error";
+      }
+    } else if (error.message) {
+      message = error.message as string;
     } else {
-      message = "Request error";
+      message = 'Unexpected error';
     }
   }
   if (error?.data?.detail) {
