@@ -205,8 +205,9 @@ function updateImageUrlInMarkdown(newMd: string) {
   }
 
   // Extract URLs from markdown and emit event to update editor
-  const oldUrl = modelValue.value?.markdown?.match(/\]\(\s*\/[^\s)?"]+/)?.[0]?.substring(2);
-  const newUrl = newMd.match(/\]\(\s*\/[^\s)?"]+/)?.[0]?.substring(2);
+  const imageUrlRegex = /(\]\(|src=")(?<url>\s*\/[^\s)?"]+)/;
+  const oldUrl = modelValue.value?.markdown?.match(imageUrlRegex)?.groups?.url;
+  const newUrl = newMd.match(imageUrlRegex)?.groups?.url;
   if (!oldUrl || !newUrl) {
     throw new Error('Failed to save image: Could not extract URLs');
   }
