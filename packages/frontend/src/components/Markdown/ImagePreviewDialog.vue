@@ -138,6 +138,15 @@ watch(modelValue, async () => {
   imageZoomRefs.value?.forEach(ref => ref?.resetZoom?.());
 });
 
+function exitEditMode() {
+  if (wasOpenedInEditMode.value) {
+    // Close dialog
+    modelValue.value = null;
+  }
+  wasOpenedInEditMode.value = false;
+  editMode.value = false;
+}
+
 function onClose(val: boolean) {
   if (!val) {
     if (editMode.value) {
@@ -147,11 +156,7 @@ function onClose(val: boolean) {
           return;
         }
       }
-      editMode.value = false;
-      if (wasOpenedInEditMode.value) {
-        // Close dialog
-        modelValue.value = null;
-      }
+      exitEditMode();
     } else {
       modelValue.value = null;
     }
@@ -228,7 +233,7 @@ async function performSave() {
   }
 
   if (!imageEditorRef.value?.hasChanges) {
-    editMode.value = false;
+    exitEditMode();
     return;
   }
 
@@ -245,8 +250,7 @@ async function performSave() {
   updateImageUrlInMarkdown(newMd);
   // Close dialog and show success
   successToast('Image saved successfully');
-  editMode.value = false;
-  wasOpenedInEditMode.value = false;
+  exitEditMode();
 }
 
 async function revertToOriginal() {
@@ -259,7 +263,6 @@ async function revertToOriginal() {
 
   // Update model and exit edit mode
   successToast('Reverted to original image');
-  editMode.value = false;
 }
 
 async function open(image: PreviewImage, editModeParam?: boolean) {
