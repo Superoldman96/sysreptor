@@ -3,10 +3,12 @@ import io
 import json
 import zipfile
 from datetime import datetime
+from unittest import mock
 
 import pytest
 from django.conf import settings
 from django.core import serializers
+from django.core.files.storage import storages
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import CommandError, call_command
 from django.forms import model_to_dict
@@ -168,6 +170,41 @@ class TestBackup:
             assert c.metadata['key_id'] is None
             z = c.read()
             self.assert_backup(z)
+
+    @override_settings(BACKUP_FILE_PREFETCH_WORKERS=2, BACKUP_FILE_PREFETCH_SIZE=3)
+    def test_backup_files_parallel_many_files(self):
+        # Ensure backup works when number of files exceeds prefetch window size
+        for i in range(50):
+            UploadedImage.objects.create(
+                linked_object=self.project,
+                name=f'file-{i}.png',
+                file=SimpleUploadedFile(name=f'file-{i}.png', content=create_png_file()),
+            )
+        res = self.backup_request()
+        assert res.status_code == 200
+        z = b''.join(res.streaming_content)
+        self.assert_backup(z)
+
+    def test_backup_files_handles_io_errors(self):
+        # If a file cannot be opened during backup, it should be counted as an error and the backup should still complete
+        failing_obj = self.project.images.all().first()
+
+        open_original = storages['uploadedimages'].open
+        def open_with_fail(name, *args, **kwargs):
+            if name == failing_obj.file.name:
+                raise FileNotFoundError(name)
+            return open_original(name, *args, **kwargs)
+        with mock.patch.object(storages['uploadedimages'], 'open', new=open_with_fail):
+            res = self.backup_request()
+            assert res.status_code == 200
+            content = b''.join(res.streaming_content)
+
+        with zipfile.ZipFile(io.BytesIO(content), mode='r') as z:
+            # failing entry exists but is empty
+            assert z.read(f'uploadedimages/{failing_obj.file.name}') == b''
+            # at least one other known file is intact
+            ok_obj = self.user.images.all().first()
+            assert z.read(f'uploadedimages/{ok_obj.file.name}') == ok_obj.file.open('rb').read()
 
 
 @pytest.mark.django_db()

@@ -3,6 +3,7 @@
 ## Upcoming
 * Image editor: fix image URLs not updated for HTML syntax in markdown
 * `cleanupfiles` command: delete unreferenced files from storage and database
+* Improve backup performance
 
 
 ## v2026.29 - 2026-05-06
