@@ -33,28 +33,42 @@ class Command(BaseCommand):
         if filesystem:
             self.cleanup_filesystem(only_storage=storage)
 
+    def get_db_files(self, qs, field_info):
+        qs = qs \
+            .annotate(file_path=F(field_info['field_name'])) \
+            .values_list('file_path', flat=True) \
+            .exclude(file_path__isnull=True) \
+            .exclude(file_path='') \
+            .distinct()
+        return set(qs)
+
     @transaction.atomic
     def cleanup_database(self, only_storage=None):
         logging.info('Cleaning up file references from the database that no longer exist on the filesystem')
         cleanup_older_than = timezone.now() - timedelta(hours=1)
 
-        for field_info in get_all_file_fields():
-            if only_storage and only_storage != field_info['storage_name']:
+        for storage_name, fields in groupby_to_dict(get_all_file_fields(), key=lambda f: f['storage_name']).items():
+            if only_storage and only_storage != storage_name:
                 continue
 
-            logging.info(f'Cleaning up {field_info["model"]._meta.label}.{field_info["field_name"]} in storage {field_info["storage_name"]}')
-            missing_file_pks = []
-            for o in field_info['model'].objects.filter(created__lt=cleanup_older_than).iterator():
-                if not self.file_exists(getattr(o, field_info['field_name'])):
-                    missing_file_pks.append(o.pk)
+            storage = fields[0]['storage']
+            fs_files = None
+            for field_info in fields:
+                logging.info(f'Cleaning up {field_info["model"]._meta.label}.{field_info["field_name"]} in storage {field_info["storage_name"]}')
 
-            qs = field_info['model'].objects.filter(pk__in=missing_file_pks)
-            if field_info['field'].null:
-                qs.update(**{field_info['field_name']: None})
-                logging.info(f'  Updated {qs.count()} entries')
-            else:
-                qs.delete()
-                logging.info(f'  Deleted {qs.count()} entries')
+                db_files = self.get_db_files(field_info['model'].objects.filter(created__lt=cleanup_older_than), field_info)
+                if fs_files is None:
+                    fs_files = set(walk_storage_dir(storage))
+                missing_files = db_files - fs_files
+
+                qs = field_info['model'].objects \
+                    .filter(**{field_info['field_name'] + '__in': missing_files})
+                if field_info['field'].null:
+                    qs.update(**{field_info['field_name']: None})
+                    logging.info(f'  Updated {qs.count()} entries')
+                else:
+                    qs.delete()
+                    logging.info(f'  Deleted {qs.count()} entries')
 
     def cleanup_filesystem(self, only_storage=None):
         logging.info('Cleaning up files from the filesystem that are not referenced in the database')
@@ -67,18 +81,12 @@ class Command(BaseCommand):
             storage = fields[0]['storage']
             logging.info(f'Cleaning up files for storage {storage_name}')
 
-            query_parts = []
+            db_files = set()
             for field_info in fields:
-                query_parts.append(field_info['model'].objects.annotate(file_path=F(field_info['field_name'])).values('file_path'))
+                db_files.update(self.get_db_files(field_info['model'].objects.all(), field_info))
                 if hasattr(field_info['model'], 'history'):
-                    query_parts.append(field_info['model'].history.annotate(file_path=F(field_info['field_name'])).values('file_path'))
+                    db_files.update(self.get_db_files(field_info['model'].history.all(), field_info))
             fs_files = set(walk_storage_dir(storage))
-            if not query_parts:
-                db_files = set()
-            elif len(query_parts) == 1:
-                db_files = set(query_parts[0].values_list('file_path', flat=True))
-            else:
-                db_files = set(query_parts[0].union(*query_parts[1:]).values_list('file_path', flat=True))
 
             unreferenced_files = fs_files - db_files
             deleted_files = []
