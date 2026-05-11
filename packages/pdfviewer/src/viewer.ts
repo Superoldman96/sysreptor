@@ -479,7 +479,6 @@ class PDFViewerApplicationClass {
     // Loading document.
     this.pdfLoadingTask = getDocument({
       ...args,
-      isEvalSupported: false,
       disableAutoFetch: true,
       useWasm: false,
     });
