@@ -20,6 +20,7 @@ from sysreptor.pentests.models import (
     SourceEnum,
 )
 from sysreptor.pentests.models.files import UploadedImage, UploadedProjectFile
+from sysreptor.pentests.tasks import update_project_search_index
 from sysreptor.tests.mock import (
     api_client,
     create_png_file,
@@ -184,6 +185,33 @@ class TestProjectApi:
         res = self.client.get(reverse('pentestproject-tags'))
         assert res.status_code == 200
         assert res.data['tags'] == expected
+
+    def assert_project_search_result(self, params, expected_result):
+        res = self.client.get(reverse('pentestproject-list', query=params))
+        assert res.status_code == 200
+        assert [p['id'] for p in res.data['results']] == [str(p.id) for p in expected_result]
+
+    def test_project_search(self):
+        p_title_and_tag = create_project(name="Title and tag TLS", tags=["crypto"], members=[self.user], findings_kwargs=[])
+        p_data_only = create_project(name="Content match", tags=["unrelated"], members=[self.user], findings_kwargs=[
+            {"data": {"description": "Weak TLS and weak crypto content"}},
+        ])
+        p_title_and_content = create_project(name="Title and content TLS", tags=["unrelated"], members=[self.user], findings_kwargs=[
+            {"data": {"description": "no crypto content here"}},
+        ])
+        p_no_match = create_project(name='No match', tags=['unrelated'], members=[self.user], findings_kwargs=[])
+
+        # Create project search index
+        update_project_search_index(task_info=None)
+
+        # Title/tags should rank higher than trigram-only matches.
+        self.assert_project_search_result({"search": "tls crypt"}, [p_title_and_tag, p_data_only, p_title_and_content])
+        # Projects match all trigrams
+        self.assert_project_search_result({"search": "tls crypt weak"}, [p_data_only])
+        # Only projects with tags, ordered by search rank
+        self.assert_project_search_result({"search": "tls crypt", 'tag': 'crypto'}, [p_title_and_tag])
+        # All projects
+        self.assert_project_search_result({"search": ""}, [p_title_and_tag, p_data_only, p_title_and_content, p_no_match])
 
 
 @pytest.mark.django_db()

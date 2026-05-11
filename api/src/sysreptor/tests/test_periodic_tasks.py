@@ -5,12 +5,14 @@ from uuid import uuid4
 
 import pytest
 from asgiref.sync import async_to_sync
+from django.db import models
 from django.test import override_settings
 from django.utils import timezone
 from pytest_django.asserts import assertNumQueries
 
 from sysreptor.pentests.models import (
     ArchivedProject,
+    BlindTrigramToken,
     CollabEvent,
     CollabEventType,
     NoteType,
@@ -24,6 +26,7 @@ from sysreptor.pentests.tasks import (
     cleanup_template_files,
     cleanup_usernotebook_files,
     reset_stale_archive_restores,
+    update_project_search_index,
 )
 from sysreptor.tasks.models import (
     PeriodicTask,
@@ -41,6 +44,7 @@ from sysreptor.tests.mock import (
     override_configuration,
     update,
 )
+from sysreptor.utils import crypto
 
 
 @contextlib.contextmanager
@@ -86,7 +90,7 @@ class TestPeriodicTaskScheduling:
         assert not self.mock_task_success.called
 
     def test_rerun_after_schedule(self):
-        PeriodicTask.objects.create(id='task_success', status=TaskStatus.SUCCESS, started=timezone.now() - timedelta(days=2), completed=timezone.now()- timedelta(days=2))
+        PeriodicTask.objects.create(id='task_success', status=TaskStatus.SUCCESS, started=timezone.now() - timedelta(days=2), completed=timezone.now() - timedelta(days=2))
         start_time = timezone.now()
         self.run_tasks()
         t = PeriodicTask.objects.get(id='task_success')
@@ -116,6 +120,16 @@ class TestPeriodicTaskScheduling:
 
     def test_running_timeout_retry(self):
         PeriodicTask.objects.create(id='task_success', status=TaskStatus.RUNNING, started=timezone.now() - timedelta(hours=2))
+        start_time = timezone.now()
+        self.run_tasks()
+        t = PeriodicTask.objects.get(id='task_success')
+        assert t.status == TaskStatus.SUCCESS
+        assert t.started > start_time
+        assert t.completed > start_time
+        assert self.mock_task_success.call_count == 1
+
+    def test_queued_run_immediately(self):
+        PeriodicTask.objects.create(id='task_success', status=TaskStatus.QUEUED, started=timezone.now(), completed=timezone.now())
         start_time = timezone.now()
         self.run_tasks()
         t = PeriodicTask.objects.get(id='task_success')
@@ -570,3 +584,104 @@ class TestCleanupCollabEvents:
     def test_not_deleted_too_new(self):
         async_to_sync(cleanup_collab_events)(None)
         assert CollabEvent.objects.filter(id=self.collab_event.id).exists()
+
+
+@pytest.mark.django_db()
+class TestUpdateProjectSearchIndex:
+    def run_rebuild_project_search_index(self, num_queries):
+        with assertNumQueries(num_queries):
+            update_project_search_index(task_info=None)
+
+    def test_rebuild_index_for_projects_idempotent_and_touches_updated(self):
+        project = create_project(findings_kwargs=[{'data': {'description': 'this is some longer description for indexing'}}])
+        finding = project.findings.first()
+        assert BlindTrigramToken.objects.filter(project=project).count() == 0
+
+        self.run_rebuild_project_search_index(num_queries=5)
+        tokens_1 = BlindTrigramToken.objects.filter(project=project).values_list('token', 'updated')
+        assert {u for _, u in tokens_1} == {finding.updated}
+
+        # Content unchanged: no rebuild required
+        self.run_rebuild_project_search_index(num_queries=1)
+
+        # Full rebuild
+        BlindTrigramToken.objects.all().delete()
+        self.run_rebuild_project_search_index(num_queries=5)
+        tokens_2 = BlindTrigramToken.objects.filter(project=project).values_list('token', 'updated')
+        assert set(tokens_2) == set(tokens_1)
+
+    def test_delete_only_change_does_not_cause_endless_stale_detection(self):
+        project = create_project(findings_kwargs=[{'data': {'description': 'abcdefgh'}}])
+        finding = project.findings.first()
+
+        self.run_rebuild_project_search_index(num_queries=5)
+
+        # Change data so token set shrinks (delete-only diff possible)
+        update(finding, data={'description': 'abcd'})
+        assert BlindTrigramToken.objects.filter(project=project).aggregate(m=models.Max('updated'))['m'] < finding.updated
+
+        self.run_rebuild_project_search_index(num_queries=5)
+        tokens = list(BlindTrigramToken.objects.filter(project=project).values_list('token', 'updated'))
+        assert tokens
+        assert {u for _, u in tokens} == {finding.updated}
+
+        assert not BlindTrigramToken.objects.filter(project=project).search('efgh').exists()
+
+    def test_only_stale_projects_rebuilt(self):
+        project_stale = create_project(findings_kwargs=[{'data': {'description': 'abcdefgh'}}])
+        project_fresh = create_project(findings_kwargs=[{'data': {'description': 'ijklmnop'}}])
+
+        self.run_rebuild_project_search_index(num_queries=5)
+        stale_updated_1 = BlindTrigramToken.objects.filter(project=project_stale).aggregate(m=models.Max('updated'))['m']
+        fresh_updated_1 = BlindTrigramToken.objects.filter(project=project_fresh).aggregate(m=models.Max('updated'))['m']
+
+        # Touch only one project => only this project's token timestamps should move.
+        finding = project_stale.findings.first()
+        update(finding, data={'description': 'abcdxxxx'})
+        assert finding.updated > stale_updated_1
+
+        self.run_rebuild_project_search_index(num_queries=5)
+        stale_updated_2 = BlindTrigramToken.objects.filter(project=project_stale).aggregate(m=models.Max('updated'))['m']
+        fresh_updated_2 = BlindTrigramToken.objects.filter(project=project_fresh).aggregate(m=models.Max('updated'))['m']
+        assert stale_updated_2 == finding.updated
+        assert fresh_updated_2 == fresh_updated_1
+
+        # Content unchanged: no rebuild required
+        self.run_rebuild_project_search_index(num_queries=1)
+
+    def test_search(self):
+        project = create_project(findings_kwargs=[{'data': {'description': 'this is some longer description for indexing'}}])
+        finding = project.findings.first()
+        self.run_rebuild_project_search_index(num_queries=5)
+
+        assert list(PentestProject.objects.search([finding.data['description']])) == [project]
+
+    def test_search_normalization(self):
+        project = create_project(findings_kwargs=[{
+            'data': {'description': 'Weak ＴＬＳ\t   ČrŸpTö\ncontent'},
+        }])
+        self.run_rebuild_project_search_index(num_queries=5)
+        assert list(PentestProject.objects.search(['tls crypto'])) == [project]
+
+    def test_search_across_multiple_encryption_keys(self):
+        key1 = crypto.EncryptionKey(id='key1', key=b'a' * 32)
+        key2 = crypto.EncryptionKey(id='key2', key=b'b' * 32)
+
+        with override_settings(
+            ENCRYPTION_KEYS={'key1': key1, 'key2': key2},
+            DEFAULT_ENCRYPTION_KEY_ID='key1',
+        ):
+            project1 = create_project(
+                name='p1',
+                findings_kwargs=[{'data': {'description': 'sharedword project1 content'}}],
+            )
+            self.run_rebuild_project_search_index(num_queries=5)
+
+            with override_settings(DEFAULT_ENCRYPTION_KEY_ID='key2'):
+                project2 = create_project(
+                    name='p2',
+                    findings_kwargs=[{'data': {'description': 'sharedword project2 content'}}],
+                )
+                self.run_rebuild_project_search_index(num_queries=5)
+
+                assert set(PentestProject.objects.search(['sharedword'])) == {project1, project2}

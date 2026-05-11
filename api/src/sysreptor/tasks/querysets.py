@@ -19,7 +19,7 @@ class PeriodicTaskQuerySet(models.QuerySet):
         for t_id, spec in task_specs.items():
             model = task_models.get(t_id)
             # Remove non-pending tasks
-            if model and (
+            if model and model.status != TaskStatus.QUEUED and (
                 (model.status == TaskStatus.RUNNING and model.started > timezone.now() - spec.max_runtime) or \
                 (model.status == TaskStatus.FAILED and model.started > timezone.now() - spec.retry) or \
                 (model.status == TaskStatus.SUCCESS and model.started > timezone.now() - spec.schedule)

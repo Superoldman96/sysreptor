@@ -6,6 +6,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.test import override_settings
 
+from sysreptor.pentests.models import BlindTrigramToken
 from sysreptor.utils.crypto.fields import EncryptedField
 from sysreptor.utils.crypto.storage import EncryptedStorageMixin
 from sysreptor.utils.files import get_all_file_fields
@@ -29,6 +30,9 @@ class Command(BaseCommand):
             if encrypted_fields:
                 logging.info(f'  Encrypting DB fields for model {model._meta.label}: {", ".join(encrypted_fields)}')
                 model.objects.bulk_update(model.objects.all().iterator(), encrypted_fields)
+
+        # Rebuild project search index: rebuilt via scheduled tasks in background
+        BlindTrigramToken.objects.all().delete()
 
         # Encrypt files and file DB fields
         for storage_name, fields in groupby_to_dict(get_all_file_fields(), key=lambda f: f['storage_name']).items():

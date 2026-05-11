@@ -14,6 +14,7 @@ class TaskStatus(models.TextChoices):
     RUNNING = 'running', 'Running'
     SUCCESS = 'success', 'Success'
     FAILED = 'failed', 'Failed'
+    QUEUED = 'queued', 'Queued'
 
 
 class PeriodicTask(BaseModel):
