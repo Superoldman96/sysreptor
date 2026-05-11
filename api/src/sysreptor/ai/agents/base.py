@@ -7,11 +7,17 @@ from typing import Any
 
 import yaml
 from asgiref.sync import sync_to_async
+from deepagents._tools import _apply_tool_description_overrides
 from deepagents.backends import StateBackend
 from deepagents.graph import BASE_AGENT_PROMPT
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT, SubAgentMiddleware
 from deepagents.middleware.summarization import create_summarization_middleware
+from deepagents.profiles import GeneralPurposeSubagentProfile
+from deepagents.profiles.harness.harness_profiles import (
+    _apply_profile_prompt,
+    _harness_profile_for_model,
+)
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.core.serializers.json import DjangoJSONEncoder
@@ -118,14 +124,27 @@ def create_sysreptor_agent(system_prompt: str, tools: list, middleware: list, **
     Based on langchain deepagents library but without filesystem tools.
     """
     model = init_chat_model()
-    backend = StateBackend
+    profile = _harness_profile_for_model(model, settings.AI_AGENT_MODEL)
+    tools = _apply_tool_description_overrides(tools, profile.tool_description_overrides)
+
+    backend = StateBackend()
     middleware = [
         TodoListMiddleware(),
         PatchToolCallsMiddleware(),
         create_summarization_middleware(model=model, backend=backend),
-    ] + middleware
+    ] + profile.materialize_extra_middleware() + middleware
+
+    gp_profile = profile.general_purpose_subagent or GeneralPurposeSubagentProfile()
+    if gp_profile.system_prompt is not None:
+        subagent_prompt = gp_profile.system_prompt
+        if profile.system_prompt_suffix is not None:
+            subagent_prompt + '\n\n' + profile.system_prompt_suffix
+    else:
+        subagent_prompt = _apply_profile_prompt(profile, GENERAL_PURPOSE_SUBAGENT['system_prompt'])
     subagents = [
         GENERAL_PURPOSE_SUBAGENT | {
+            'description': gp_profile.description or GENERAL_PURPOSE_SUBAGENT['description'],
+            'system_prompt': subagent_prompt,
             'model': model,
             'tools': tools,
             'middleware': middleware,
@@ -133,7 +152,7 @@ def create_sysreptor_agent(system_prompt: str, tools: list, middleware: list, **
     ]
     agent = create_agent(
         model=model,
-        system_prompt=BASE_AGENT_PROMPT + '\n\n' + system_prompt,
+        system_prompt=system_prompt + '\n\n' + _apply_profile_prompt(profile, BASE_AGENT_PROMPT),
         tools=tools,
         middleware=middleware + [
             SubAgentMiddleware(backend=backend, subagents=subagents),
@@ -189,7 +208,7 @@ async def agent_stream(agent, thread: ChatThread, context: dict[str, str]|None =
                 stream_mode=["messages", "values", "updates"],
                 config={
                     'configurable': {
-                        'thread_id': thread.id,
+                        'thread_id': str(thread.id),
                     },
                 },
                 context=agent.context_schema(**(context or {}) | {'user_id': thread.user_id, 'project_id': thread.project_id}),
@@ -260,7 +279,7 @@ def get_chat_history(agent, thread: ChatThread):
     if not thread_exists:
         raise LangchainCheckpoint.DoesNotExist()
 
-    state = agent.get_state(config={'configurable': {'thread_id': thread.id}})
+    state = agent.get_state(config={'configurable': {'thread_id': str(thread.id)}})
     messages = []
     tool_calls = []
     for m in state.values.get('messages', []):

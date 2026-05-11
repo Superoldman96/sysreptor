@@ -1,5 +1,6 @@
 @use "@base/assets/settings.scss" as settings;
-@use "@base/assets/vuetify.scss" as vuetify;
+// @use "@base/assets/vuetify.scss" as vuetifySettings;
+@use "vuetify";
 @import '@base/assets/fonts/noto/noto.css';
 
 
@@ -19,7 +20,7 @@ html {
 
 body {
   font-family: settings.$body-font-family;
-  line-height: vuetify.$line-height-root;
+  // line-height: vuetifySettings.$line-height-root;
   margin: 0;
 }
 
