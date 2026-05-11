@@ -31,7 +31,23 @@
 
     <template #toolbar>
       <btn-confirm
-        v-if="editMode && editedImageInfo?.original && originalImageSrc"
+        v-if="!editMode && originalImageSrc"
+        :action="openOriginalDialog"
+        :confirm="false"
+        :disabled="fetchOriginalImageInfo.pending.value"
+        button-variant="icon"
+        button-text="View original"
+        tooltip-text="View Original Image"
+        class="dialog-toolbar-btn"
+      >
+        <template #icon>
+          <v-badge icon="mdi-undo-variant" location="bottom right" color="surface" offset-y="4">
+            <v-icon size="large" icon="mdi-image-outline" />
+          </v-badge>
+        </template>
+      </btn-confirm>
+      <btn-confirm
+        v-if="editMode && originalImageSrc"
         :action="revertToOriginal"
         :confirm="true"
         :disabled="props.readonly"
@@ -104,9 +120,55 @@
       />
     </v-card-text>
   </s-dialog>
+
+  <s-dialog
+    v-if="modelValue"
+    v-model="originalDialogOpen"
+    width="80vw"
+    max-width="80vw"
+    height="80vh"
+    max-height="80vh"
+    density="compact"
+  >
+    <template #title>
+      <span>Original Image</span>
+    </template>
+    <template #toolbar>
+      <btn-confirm
+        :action="revertToOriginalAndClose"
+        :confirm="true"
+        :disabled="props.readonly || !originalImageSrc"
+        button-variant="icon"
+        button-text="Revert"
+        tooltip-text="Revert to Original Image"
+        class="dialog-toolbar-btn"
+      >
+        <template #icon>
+          <v-icon size="large" icon="mdi-undo-variant" />
+        </template>
+        <template #dialog-text>
+          <p class="mt-0">
+            Are you sure you want to revert to the original image? This will discard all annotations and edits you've made to this image.
+          </p>
+        </template>
+      </btn-confirm>
+    </template>
+    <v-divider />
+    <v-card-text class="pa-0 flex-grow-height">
+      <div v-if="fetchOriginalImageInfo.pending.value" class="pa-4 d-flex justify-center">
+        <v-progress-circular indeterminate />
+      </div>
+      <markdown-image-preview-zoom
+        v-if="originalImageSrc"
+        :src="originalImageSrc"
+      />
+    </v-card-text>
+  </s-dialog>
 </template>
 
 <script setup lang="ts">
+import { useAbortController } from '@base/utils/helpers';
+
 const modelValue = defineModel<PreviewImage|null>();
 const props = defineProps<{
   images: PreviewImage[];
@@ -126,16 +188,23 @@ const imageZoomRefs = ref<any[]>([]);
 
 const editMode = ref(false);
 const wasOpenedInEditMode = ref(false);
-const editedImageInfo = ref<Omit<UploadedFileInfo, 'original'> & { original: UploadedFileInfo|null }|null>(null);
+const currentImageInfo = ref<UploadedFileInfo|null>(null);
+const originalImageInfo = ref<UploadedFileInfo|null>(null);
 const saveInProgress = ref(false);
+const originalDialogOpen = ref(false);
+
 watch(modelValue, async () => {
   editMode.value = false;
   wasOpenedInEditMode.value = false;
   saveInProgress.value = false;
-  editedImageInfo.value = null;
+  originalDialogOpen.value = false;
+  currentImageInfo.value = null;
+  originalImageInfo.value = null;
   // Reset zoom when navigating to another image
   await nextTick();
   imageZoomRefs.value?.forEach(ref => ref?.resetZoom?.());
+
+  await resolveOriginalInfo();
 });
 
 function exitEditMode() {
@@ -164,43 +233,89 @@ function onClose(val: boolean) {
 }
 
 const originalImageSrc = computed(() => {
-  if (!editedImageInfo.value?.original?.name || !modelValue.value?.src) {
+  if (!originalImageInfo.value?.name || !currentImageInfo.value?.name || !modelValue.value?.src) {
     return null;
   }
-  return modelValue.value.src.replace('/' + editedImageInfo.value.name, '/' + editedImageInfo.value.original.name);
+  return modelValue.value.src.replace('/' + currentImageInfo.value.name, '/' + originalImageInfo.value.name);
 });
 
 watch(editMode, async () => {
   if (editMode.value) {
-    const img = await getImageInfoFromSrc(modelValue.value?.src || '');
-    editedImageInfo.value = img ? {
-      ...img,
-      original: img?.original ? await getImageInfoById(img.original) : null,
-    } : null;
-  } else {
-    editedImageInfo.value = null;
+    await resolveOriginalInfo();
   }
 });
-async function getImageInfoById(id: string) {
+async function getImageInfoById(id: string, signal: AbortSignal) {
   const imageApiUrl = new URL(modelValue.value!.src).pathname.replace(/\/name\/.*/, '/' + id);
-  return await $fetch<UploadedFileInfo>(imageApiUrl, { method: 'GET' });
+  return await $fetch<UploadedFileInfo>(imageApiUrl, { method: 'GET', signal });
 }
-async function getImageInfoFromSrc(imageSrc?: string|null) {
+
+async function getImageInfoFromSrc(imageSrc: string|null|undefined, signal: AbortSignal) {
   if (!imageSrc) {
     return null;
   }
 
   try {
-    const res = await $fetch.raw(imageSrc, { method: 'HEAD' });
+    const res = await $fetch.raw(imageSrc, { method: 'HEAD', signal });
     const fileId = res.headers.get('X-Sysreptor-Id');
     if (!fileId) {
       return null;
     }
 
-    return await getImageInfoById(fileId);
+    return await getImageInfoById(fileId, signal);
   } catch {
     return null;
   }
+}
+
+const fetchOriginalImageInfo = useAbortController(async ({ signal }) => {
+  const src = modelValue.value?.src;
+  if (!src) {
+    return;
+  }
+
+  const img = await getImageInfoFromSrc(src, signal);
+  if (signal.aborted) {
+    return;
+  }
+
+  currentImageInfo.value = img;
+
+  if (!img?.original) {
+    originalImageInfo.value = null;
+    return;
+  }
+
+  const original = await getImageInfoById(img.original, signal);
+  if (signal.aborted) {
+    return;
+  }
+  originalImageInfo.value = original;
+});
+
+async function resolveOriginalInfo() {
+  if (!modelValue.value?.src) {
+    fetchOriginalImageInfo.abort();
+    return;
+  }
+
+  try {
+    await fetchOriginalImageInfo.run();
+  } catch {
+    return;
+  }
+}
+
+async function openOriginalDialog() {
+  await resolveOriginalInfo();
+  if (!originalImageSrc.value) {
+    return;
+  }
+  originalDialogOpen.value = true;
+}
+
+async function revertToOriginalAndClose() {
+  await revertToOriginal();
+  originalDialogOpen.value = false;
 }
 
 
@@ -244,24 +359,25 @@ async function performSave() {
   }
   const file = new File([blob], 'edited.png', { type: 'image/png' });
   const newMd = await props.uploadFile(file, { 
-    original: editedImageInfo.value?.original?.id || editedImageInfo.value?.id || null,
+    original: originalImageInfo.value?.id || currentImageInfo.value?.id || null,
   });
 
   updateImageUrlInMarkdown(newMd);
   // Close dialog and show success
-  successToast('Image saved successfully');
   exitEditMode();
+  successToast('Image saved successfully');
 }
 
 async function revertToOriginal() {
-  if (!editedImageInfo.value?.original || !modelValue.value?.markdown || props.readonly) {
+  if (!originalImageInfo.value || !currentImageInfo.value || !modelValue.value?.markdown || props.readonly) {
     return;
   }
 
-  const newMd = modelValue.value.markdown.replaceAll('/' + editedImageInfo.value.name, '/' + editedImageInfo.value.original.name);
+  const newMd = modelValue.value.markdown.replaceAll('/' + currentImageInfo.value.name, '/' + originalImageInfo.value.name);
   updateImageUrlInMarkdown(newMd);
 
   // Update model and exit edit mode
+  exitEditMode();
   successToast('Reverted to original image');
 }
 
