@@ -1,9 +1,11 @@
 import argparse
+import json
 import logging
 
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 
-from sysreptor.api_utils.backup_utils import create_backup, encrypt_backup, to_chunks
+from sysreptor.api_utils.backup_utils import create_backup, encrypt_backup, to_chunks, upload_to_s3_bucket
+from sysreptor.api_utils.serializers import S3ParamsSerializer
 from sysreptor.utils import crypto, license
 
 
@@ -14,12 +16,17 @@ def aes_key(val):
     return crypto.EncryptionKey(id=None, key=key)
 
 
+def parse_s3_params(val):
+    return S3ParamsSerializer(json.loads(val)).data
+
+
 class Command(BaseCommand):
     def add_arguments(self, parser: CommandParser) -> None:
         parser.add_argument('file', nargs='?', type=argparse.FileType('wb'), default='-')
         parser.add_argument('--key', type=aes_key, help='AES key as hex string to encrypt the backup (optional)')
+        parser.add_argument('--s3-params', type=parse_s3_params, help='S3 parameters for uploading the backup to S3 (optional)')
 
-    def handle(self, file, key, verbosity=1, **kwargs) -> str | None:
+    def handle(self, file, key, s3_params=None, verbosity=1, **kwargs) -> str | None:
         if verbosity <= 0:
             logging.getLogger().disabled = True
 
@@ -31,8 +38,11 @@ class Command(BaseCommand):
         if key:
             z = encrypt_backup(z, key.key)
 
-        # Write backup to file
-        with file:
-            for c in to_chunks(z):
-                file.write(c)
+        if s3_params:
+            upload_to_s3_bucket(z, s3_params)
+        else:
+            # Write backup to file
+            with file:
+                for c in to_chunks(z):
+                    file.write(c)
 
