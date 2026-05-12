@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from sysreptor.pentests import storages as pentest_storages
 from sysreptor.pentests.models import UploadedAsset, UploadedImage
-from sysreptor.tests.mock import create_project, create_project_type, mock_time
+from sysreptor.tests.mock import create_project, create_project_type, mock_time, update
 
 
 def file_exists(file) -> bool:
@@ -45,9 +45,9 @@ class TestFileDelete:
     @pytest.fixture(autouse=True)
     def setUp(self):
         with override_settings(SIMPLE_HISTORY_ENABLED=False):
-            p = create_project()
-            self.image = p.images.first()
-            self.asset = p.project_type.assets.first()
+            self.project = create_project()
+            self.image = self.project.images.first()
+            self.asset = self.project.project_type.assets.first()
             yield
 
     def test_delete_file_referenced_only_once(self):
@@ -87,6 +87,17 @@ class TestFileDelete:
         t.delete()
         for a in assets:
             assert file_exists(a.file)
+
+    def test_delete_cascade(self):
+        pt = self.project.project_type
+        pt.copy(linked_project=self.project)
+        pt2 = pt.copy(linked_project=self.project)
+        update(self.project, project_type=pt2)
+        pt.delete()
+        self.project.delete()
+
+        assert not file_exists(self.image.file)
+        assert not file_exists(self.asset.file)
 
 
 @pytest.mark.django_db()
