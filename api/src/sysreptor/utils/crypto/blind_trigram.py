@@ -50,7 +50,7 @@ def iter_text_values(data) -> Iterator[str]:
     elif isinstance(data, dict):
         for k in sorted(data.keys(), key=lambda x: str(x)):
             yield from iter_text_values(data.get(k))
-    elif isinstance(data, (list, tuple)):
+    elif isinstance(data, list|tuple):
         for item in data:
             yield from iter_text_values(item)
 
