@@ -5,6 +5,7 @@
 * Image editor: view original image in preview dialog
 * Image editor: close dialog on save if opend via edit image button
 * `cleanupfiles` command: delete unreferenced files from storage and database
+* `backup` command: allow saving backups directly to S3
 * Improve backup performance
 * Allow searching project contents in list view
 

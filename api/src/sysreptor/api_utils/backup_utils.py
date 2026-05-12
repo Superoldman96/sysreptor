@@ -343,6 +343,7 @@ def encrypt_backup(z, aes_key):
 
 
 def upload_to_s3_bucket(z, s3_params):
+    logging.info('Uploading backup to S3 bucket')
     s3 = boto3.resource('s3', **s3_params.get('boto3_params', {}))
     bucket = s3.Bucket(s3_params['bucket_name'])
 
