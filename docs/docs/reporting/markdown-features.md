@@ -201,13 +201,17 @@ Place attributes in curly braces directly after the targeted element (without sp
 Attributes are key value pairs (`attr-name="attr-value"`)
 Shortcuts for setting the attribute `id` (`#id-value`) and `class` (`.class-value`) are supported.
 
-```md
+~~~md
 ## Headline in Table of Contents {.in-toc .numbered}
 
 ![image](img.png){#img-id .image-class1 .image-class2 width="50%"}
 
 Text with [styled link](https://example.com/){class="link-class" style="color: red"} in it.
+
+```bash {#code-id .code-class}
+echo "code block"
 ```
+~~~
 
 ## Inline HTML
 If something is not possible with markdown, you can fall back to writing HTML code and embed it in the markdown document.

@@ -36,10 +36,38 @@ function highlightSyntax(code, node) {
 }
 
 function parseMeta(metaLine) {
+  let attrsContent = null;
+  const attrsMatch = metaLine.match(/\s*\{((?:"[^"]*"|'[^']*'|[^{}"'])*)\}\s*$/);
+  if (attrsMatch) {
+    attrsContent = attrsMatch[1];
+    metaLine = metaLine.slice(0, attrsMatch.index);
+  }
+
   const meta = Object.fromEntries(
     Array.from(metaLine.matchAll(/(?<name>[a-zA-Z0-9\-]+)(?:="(?<valueQuoted>[^"]+)"|=(?<valueUnquoted>[^ ]+))?/g))
       .map(m => [camelCase(m.groups.name), m.groups.valueQuoted || m.groups.valueUnquoted || null])
   );
+
+  if (attrsContent !== null) {
+    const attrsTokenRe = /#(?<id>[^\s.#={}"'<>`]+)|\.(?<className>[^\s.#={}"'<>`]+)|(?<name>[a-zA-Z_:][\w\-.:]*)(?:="(?<valueDoubleQuoted>[^"]*)"|='(?<valueSingleQuoted>[^']*)'|=(?<valueUnquoted>[^\s"'={}<>`]+))?/g;
+    for (const m of attrsContent.matchAll(attrsTokenRe)) {
+      const g = m.groups;
+      if (g.id !== undefined) {
+        meta.id = g.id;
+      } else if (g.className !== undefined) {
+        meta.class = meta.class ? meta.class + ' ' + g.className : g.className;
+      } else {
+        const key = camelCase(g.name);
+        const value = g.valueDoubleQuoted ?? g.valueSingleQuoted ?? g.valueUnquoted ?? null;
+        if (key === 'class' && meta.class) {
+          meta.class += value ? ' ' + value : '';
+        } else {
+          meta[key] = value;
+        }
+      }
+    }
+  }
+
   if (meta.highlightManual !== undefined) {
     meta.highlightManual = meta.highlightManual || '§';
   }
@@ -299,6 +327,10 @@ export function rehypeHighlightCode({ preview = false } = {}) {
       // LaTeX math expressions
       else if (language === 'math') {
         formatMathLatex(parent, { preview, displayMode: true });
+        parent.properties = { ...parent.properties, ...attrs };
+        if (meta.class) {
+          addClass(parent, meta.class);
+        }
       }
       // Regular code block
       else {      

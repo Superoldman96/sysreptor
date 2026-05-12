@@ -1,8 +1,15 @@
 import { describe, test, expect } from 'vitest'
 import { formatMarkdown, renderMarkdownToHtml } from '@sysreptor/markdown';
 
-function codeBlock(content: string, language: string|null = null) {
-  return `<pre class="code-block"><code class="${language ? 'language-' + language + ' ' : ''}hljs">${
+function codeBlock(content: string, language: string|null = null, attrs: Record<string, string> = {}) {
+  const classes = (attrs['class'] || '').split(' ');
+  if (language) {
+    classes.unshift('language-' + language);
+  }
+  classes.push('hljs');
+  attrs['class'] = classes.filter(c => !!c).join(' ');
+  const attrStr = Object.entries({class: attrs['class'], ...attrs}).map(([key, value]) => ` ${key}="${value}"`).join('');
+  return `<pre class="code-block"><code${attrStr}>${
     content.split('\n')
       .map((l, idx) => `<span class="code-block-line" data-line-number="${idx + 1}">${l}</span>`)
       .join('\n')
@@ -28,7 +35,7 @@ describe('Markdown extensions', () => {
     '[link](https://example.com){#id}': '<p><a href="https://example.com" id="id" target="_blank" rel="nofollow noopener noreferrer">link</a></p>',
     '[link](https://example.com){.class1 .class2 .class3}': '<p><a href="https://example.com" class="class1 class2 class3" target="_blank" rel="nofollow noopener noreferrer">link</a></p>',
     '[link](https://example.com){width="15cm" height=10cm}': '<p><a href="https://example.com" style="width:15cm;height:10cm;" target="_blank" rel="nofollow noopener noreferrer">link</a></p>',
-    '[link](https://example.com){style="color: red" data-attr="test"}': '<p><a href="https://example.com" style="color: red" data-attr="test" target="_blank" rel="nofollow noopener noreferrer">link</a></p>',
+    '[link](https://example.com){style="color: red" data-attr="test" attr2=" } "}': '<p><a href="https://example.com" style="color: red" data-attr="test" attr2=" } " target="_blank" rel="nofollow noopener noreferrer">link</a></p>',
     '[link](https://example.com){width="15cm" style="color:red"}': '<p><a href="https://example.com" style="color:red;width:15cm;" target="_blank" rel="nofollow noopener noreferrer">link</a></p>',
     '# Heading {#id .class style="color:red"}': '<h1 id="id" class="class" style="color:red">Heading </h1>',
     '## Heading{#id}': '<h2 id="id">Heading</h2>',
@@ -56,11 +63,18 @@ describe('Markdown extensions', () => {
     '```python highlight-manual\npr§<mark><strong>BEGIN</strong><em>§int("hel§</em><strong>END</strong></mark>§lo world")\n```': codeBlock('<span class="hljs-built_in">pr</span><mark><strong>BEGIN</strong><em><span class="hljs-built_in">int</span>(<span class="hljs-string">"hel</span></em><strong>END</strong></mark><span class="hljs-string">lo world"</span>)', 'python'),
     '```\npr§§int("hel§§lo world")\n```': codeBlock('pr§§int("hel§§lo world")'),
     '```none highlight-manual="|"\npr||int("hel||lo world")\n```': codeBlock('pr<mark>int("hel</mark>lo world")', 'none'),
+    '```python {#id .class1 .class2 style="color:red;" data-attr="test"}\ncode\n```': codeBlock('code', 'python', {class: 'class1 class2', id: 'id', style: 'color:red;', 'data-attr': 'test'}),
+    '```python {#id}\ncode\n```': codeBlock('code', 'python', {id: 'id'}),
+    '```python highlight-manual {#id}\ncode\n```': codeBlock('code', 'python', {id: 'id'}),
+    '```python highlight-manual {#id}\ncode\n```': codeBlock('code', 'python', {id: 'id'}),
+    '```python attr1=" { " attr2=" } " {#id attr3=" } "}\ncode\n```': codeBlock('code', 'python', {attr1: ' { ', attr2: ' } ', id: 'id', attr3: ' } '}),
     // Mermaid diagrams
     '```mermaid\ngraph LR A-->B\n```': '<figure><mermaid-diagram>graph LR A-->B\n</mermaid-diagram></figure>',
     '```mermaid width=50% caption="Example diagram"\ngraph LR A-->B\n```': '<figure><mermaid-diagram style="width:50%;">graph LR A-->B\n</mermaid-diagram><figcaption>Example diagram</figcaption></figure>',
+    '```mermaid {#id .class data-attr="value"}\ngraph LR A-->B\n```': '<figure><mermaid-diagram class="class" id="id" data-attr="value">graph LR A-->B\n</mermaid-diagram></figure>',
     // Math LaTeX
     '```math\nE=mc^2\n```': '<math-latex display-mode="true" class="">E=mc^2\n</math-latex>',
+    '```math {#id .class data-attr="value"}\nE=mc^2\n```': '<math-latex display-mode="true" class="class" id="id" data-attr="value">E=mc^2\n</math-latex>',
     '$$\nE=mc^2\n$$': '<math-latex display-mode="true" class="">E=mc^2</math-latex>',
     'Inline $E=mc^2$ math': '<p>Inline <math-latex class="language-math math-inline" display-mode="false">E=mc^2</math-latex> math</p>',
     // Nested elements
