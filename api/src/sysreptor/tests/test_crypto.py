@@ -4,6 +4,7 @@ import json
 import random
 import tempfile
 from contextlib import contextmanager
+from unittest import mock
 from uuid import UUID
 
 import pytest
@@ -287,20 +288,22 @@ class TestEncryptedDbField:
 class TestEncryptDataCommand:
     @pytest.fixture(autouse=True)
     def setUp(self):
-        with override_settings(
-            ENCRYPTION_KEYS={},
-            DEFAULT_ENCRYPTION_KEY_ID=None,
-            ENCRYPTION_PLAINTEXT_FALLBACK=True,
-            STORAGES=settings.STORAGES | {
-                'uploadedimages': {'BACKEND': 'sysreptor.utils.storages.EncryptedInMemoryStorage'},
-                'uploadedassets': {'BACKEND': 'sysreptor.utils.storages.EncryptedInMemoryStorage'},
-                'uploadedfiles': {'BACKEND': 'sysreptor.utils.storages.EncryptedInMemoryStorage'},
-            },
+        with (
+            override_settings(
+                ENCRYPTION_KEYS={},
+                DEFAULT_ENCRYPTION_KEY_ID=None,
+                ENCRYPTION_PLAINTEXT_FALLBACK=True,
+                STORAGES=settings.STORAGES | {
+                    'uploadedimages': {'BACKEND': 'sysreptor.utils.storages.EncryptedInMemoryStorage'},
+                    'uploadedassets': {'BACKEND': 'sysreptor.utils.storages.EncryptedInMemoryStorage'},
+                    'uploadedfiles': {'BACKEND': 'sysreptor.utils.storages.EncryptedInMemoryStorage'},
+                },
+            ),
+            mock.patch.object(UploadedImage.file.field, 'storage', storages['uploadedimages']),
+            mock.patch.object(UploadedAsset.file.field, 'storage', storages['uploadedassets']),
+            mock.patch.object(UploadedProjectFile.file.field, 'storage', storages['uploadedfiles']),
+            mock.patch.object(ProjectNotebookExcalidrawFile.file.field, 'storage', storages['uploadedfiles']),
         ):
-            UploadedImage.file.field.storage = storages['uploadedimages']
-            UploadedAsset.file.field.storage = storages['uploadedassets']
-            UploadedProjectFile.file.field.storage = storages['uploadedfiles']
-            ProjectNotebookExcalidrawFile.file.field.storage = storages['uploadedfiles']
             self.project = create_project()
             yield
 

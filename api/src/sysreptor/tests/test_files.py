@@ -1,8 +1,11 @@
 from datetime import timedelta
+from unittest import mock
 from uuid import uuid4
 
 import pytest
+from django.conf import settings
 from django.core.files.base import ContentFile
+from django.core.files.storage import storages
 from django.core.management import call_command
 from django.test import override_settings
 from django.utils import timezone
@@ -102,6 +105,16 @@ class TestFileDelete:
 
 @pytest.mark.django_db()
 class TestCleanupFilesCommand:
+    @pytest.fixture(autouse=True)
+    def setUp(self):
+        with (
+            override_settings(STORAGES=settings.STORAGES | {
+                'uploadedimages': {'BACKEND': 'django.core.files.storage.InMemoryStorage'},
+            }),
+            mock.patch.object(UploadedImage.file.field, 'storage', storages['uploadedimages']),
+        ):
+            yield
+
     def test_cleanup_database(self):
         p = create_project(images_kwargs=[{'name': 'image1.png'}, {'name': 'image2.png'}])
         image = p.images.filter_name('image1.png').get()
@@ -138,7 +151,7 @@ class TestCleanupFilesCommand:
             call_command('cleanupfiles', database=False, filesystem=True, storage='uploadedimages', verbosity=0)
 
         # Orphan file should be deleted
-        assert not storage.exists(orphan_name)
+        assert not storage.exists(orphan_name), f'{orphan_name=}, {storage=}, {UploadedImage.file.field.storage=}'
 
         # Referenced files should not be deleted
         image = p.images.first()
