@@ -156,6 +156,23 @@ async function postProcessRenderedHtml() {
     }
   });
 
+  // Inject copy buttons into code blocks
+  previewRef.value.querySelectorAll<HTMLPreElement>('pre.code-block:not(:has(.preview-code-copy-btn)):has(code)').forEach((pre) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.classList.add('preview-code-copy-btn', 'v-btn', 'v-btn--icon', 'v-btn--density-compact');
+    const icon = document.createElement('i');
+    icon.className = 'mdi mdi-content-copy v-icon v-icon--size-small';
+    btn.appendChild(icon);
+    pre.appendChild(btn);
+
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      copyToClipboard(pre.querySelector('code')?.textContent || '');
+    });
+  });
+
   // Allow checking task list items by clicking on the checkbox
   if (!props.readonly) {
     previewRef.value.querySelectorAll<HTMLInputElement>('li.task-list-item > input[type="checkbox"][disabled]').forEach((input) => {
@@ -272,6 +289,26 @@ defineExpose({
     }
 
     .preview-image-edit-btn {
+      position: absolute;
+      top: 0.25rem;
+      right: 0.25rem;
+      width: 2rem;
+      height: 2rem;
+
+      border-radius: 4px;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+  }
+
+  pre.code-block {
+    position: relative;
+
+    &:hover .preview-code-copy-btn {
+      opacity: 1;
+    }
+
+    .preview-code-copy-btn {
       position: absolute;
       top: 0.25rem;
       right: 0.25rem;

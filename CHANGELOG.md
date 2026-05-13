@@ -5,6 +5,7 @@
 * Image editor: view original image in preview dialog
 * Image editor: close dialog on save if opend via edit image button
 * Markdown editor: support HTML attrs for code blocks
+* Markdown editor: add copy button for code blocks in preview
 * `cleanupfiles` command: delete unreferenced files from storage and database
 * `backup` command: allow saving backups directly to S3
 * Improve backup performance
