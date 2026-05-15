@@ -238,7 +238,7 @@ report_template = """
 
 
 <section>
-    <h1 id="compromise-walkthrough" class="in-toc numbered">Internal Network Compromise Walkthrough</h1>
+    <h1 id="compromise-walkthrough" class="in-toc numbered">Network Compromise Walkthrough</h1>
     <markdown :text="report.walkthrough_summary" />
 
     <div>
@@ -1019,7 +1019,7 @@ type = "markdown"
 label = "Walkthrough Summary"
 origin = "custom"
 default = """
-During the course of the assessment {{ report.candidate.name }} was able to gain a foothold within the internal network via the provided access through the Linux SSH server, move laterally, and compromise the internal network, leading to full administrative control over the `paxora` wi-fi network and TODO INSERT NETWORK NAME Wi-Fi network. 
+During the course of the assessment, {{ report.candidate.name }} was able to identify and exploit vulnerabilities within the `paxora` wi-fi network, bypassing wireless security controls to gain an initial foothold. From this wireless vantage point, the assessor successfully moved laterally to the internal Linux SSH server. This chain of exploitation ultimately resulted in full administrative compromise of both the internal network and the Wi-Fi infrastructure, demonstrating the risk of wireless-to-wired pivoting.
 
 The steps below outline the actions taken from initial access to compromise. This attack chain does not encompass all vulnerabilities and misconfigurations discovered during the assessment. Any issues not directly used as part of the attack chain are documented separately in the [Technical Findings Details](#findings) section, ranked by severity level. 
 
@@ -1379,7 +1379,7 @@ To maintain a robust security posture, {{ report.customer_short }} should also c
 wifi_summary = "{{ report.candidate.name }} began all testing activities from the perspective of an unauthenticated user on the internal network of {{ report.customer_short }}. {{ report.customer_short }} provided the tester with internal network access via the Linux SSH server, but did not provide additional information such as configuration details.  "
 finding_summary = "During the course of testing, {{ report.candidate.name }} uncovered a total of {{ finding_stats.count_total }} findings that pose a material risk to {{ report.customer_short }}' information systems. As requested by {{ report.customer_short }}, this assessment focuses exclusively on findings with medium and high impact, ensuring that all documented vulnerabilities and recommendations are directly relevant to risks that could significantly affect the confidentiality, integrity, and availability of {{ report.customer_short }}’ systems. The below chart provides a summary of the findings by severity level."
 walkthrough_summary = """
-During the course of the assessment {{ report.candidate.name }} was able to gain a foothold within the internal network via the provided access through the Linux SSH server, move laterally, and compromise the internal network, leading to full administrative control over the `paxora` wi-fi network and TODO INSERT NETWORK NAME Wi-Fi network. 
+During the course of the assessment, {{ report.candidate.name }} was able to identify and exploit vulnerabilities within the `paxora` wi-fi network, bypassing wireless security controls to gain an initial foothold. From this wireless vantage point, the assessor successfully moved laterally to the internal Linux SSH server. This chain of exploitation ultimately resulted in full administrative compromise of both the internal network and the Wi-Fi infrastructure, demonstrating the risk of wireless-to-wired pivoting.
 
 The steps below outline the actions taken from initial access to compromise. This attack chain does not encompass all vulnerabilities and misconfigurations discovered during the assessment. Any issues not directly used as part of the attack chain are documented separately in the [Technical Findings Details](#findings) section, ranked by severity level. 
 
