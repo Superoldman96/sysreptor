@@ -10,6 +10,7 @@
 * `backup` command: allow saving backups directly to S3
 * Improve backup performance
 * Allow searching project contents in list view
+* Fix note search virtual scroll jumps
 
 
 ## v2026.29 - 2026-05-06

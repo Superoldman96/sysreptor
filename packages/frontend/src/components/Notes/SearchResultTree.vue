@@ -7,6 +7,8 @@
     :tree-line="false"
     :indent="20"
     :virtualization="true"
+    :item-size="virtualListItemSize"
+    :buffer="3 * (NOTE_HEIGHT_PX + MAX_MATCHES_PER_NOTE * MATCH_HEIGHT_PX)"
     class="h-100"
   >
     <template #default="{ node: { item: note }, stat }">
@@ -40,6 +42,7 @@
       <search-match-list
         :result="stat.data"
         :to-prefix="noteUrl(note)"
+        :max-matches="MAX_MATCHES_PER_NOTE"
         class="match-list"
       />
     </template>
@@ -50,6 +53,10 @@
 import { Draggable } from "@he-tree/vue";
 import '@he-tree/vue/style/default.css';
 
+const NOTE_HEIGHT_PX = 32;
+const MATCH_HEIGHT_PX = 24;
+const MAX_MATCHES_PER_NOTE = 10;
+
 const props = defineProps<{
   modelValue: NoteSearchResults<NoteBase>;
   toPrefix: string;
@@ -59,11 +66,17 @@ function noteUrl(note: NoteBase,) {
   return `${props.toPrefix}${note.id}/`;
 }
 
+function virtualListItemSize(stat: { data?: SearchResult<NoteBase> }, _index: number) {
+  return stat?.data ? 
+    (NOTE_HEIGHT_PX + Math.min(stat.data.matches.length, MAX_MATCHES_PER_NOTE) * MATCH_HEIGHT_PX) : 
+    NOTE_HEIGHT_PX;
+}
+
 </script>
 
 <style scoped lang="scss">
 .note-list-item {
-  min-height: 1em;
+  min-height: calc(v-bind(NOTE_HEIGHT_PX) * 1px);
   padding-left: 0;
 
   .note-list-children-icon {
@@ -81,12 +94,16 @@ function noteUrl(note: NoteBase,) {
     height: 1.5rem;
 
     .emoji-icon {
-      padding-top: 2px
+      padding-top: 2px;
     }
   }
 }
 
 .match-list {
   padding-left: 1.2rem;
+
+  :deep(.v-list-item) {
+    min-height: calc(v-bind(MATCH_HEIGHT_PX) * 1px);
+  }
 }
 </style>
